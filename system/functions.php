@@ -1778,16 +1778,23 @@ function download($url) {
 }
 
 function validateUrl($url) {
-    $p = parse_url($url);
-    if (! $p || ! in_array($p['scheme'] ?? '', ['http', 'https'], true) || empty($p['host'])) {
-        return '';
+    $p      = parse_url($url);
+    $scheme = $p['scheme'] ?? 'https';
+    $port   = $p['port'] ?? ($scheme === 'http' ? '80' : '443');
+
+    if (! $p || ! in_array($scheme, ['http', 'https'], true) || ! in_array($port, ['80', '443'], true) || empty($p['host'])) {
+	return [];
+    }
+
+    if (($scheme === 'http' && $port !== '80') || ($scheme === 'https' && $port !== '443'))  {
+	return [];
     }
     
-    $ips = gethostbynamel($p['host']) ?: [];
+    $ips    = gethostbynamel($p['host']) ?: [];
     
     $results = [];
     foreach ($ips as $ip) {
-		$results[] = $p['host'] . ':443:[' . $ip .']';
+        $results[] = $p['host'] . ':' . $port . ':[' . $ip . ']';
 		
         if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
             return []; // private / reserved / loopback / link-local
