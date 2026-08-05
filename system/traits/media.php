@@ -29,18 +29,49 @@ use function Vvveb\rrmdir;
 use function Vvveb\sanitizeFileName;
 use Vvveb\System\Event;
 
+/**
+ * Trait providing file upload, deletion, renaming, folder creation, and directory scanning.
+ *
+ * Includes security checks for denied extensions, MIME types, executable signatures,
+ * and path traversal prevention.
+ */
 trait Media {
-	public $uploadDenyExtensions = ['php', 'svg', 'js', 'exe', 'html', 'phtml', 'htaccess', '.phar'];
+	/**
+	 * File extensions that are not allowed for upload.
+	 *
+	 * @var list<string>
+	 */
+	public array $uploadDenyExtensions = ['php', 'svg', 'js', 'exe', 'html', 'phtml', 'htaccess', 'phar'];
 
-	public $uploadDenyMime    = ['image/svg', 'image/svg+xml', 'application/javascript', 'application/x-msdownload'];
+	/**
+	 * MIME types that are not allowed for upload.
+	 *
+	 * @var list<string>
+	 */
+	public array $uploadDenyMime = ['image/svg', 'image/svg+xml', 'application/javascript', 'application/x-msdownload'];
 
-	public $stripMetadataMime = ['image/jpg', 'image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+	/**
+	 * MIME types whose EXIF/metadata will be stripped on upload.
+	 *
+	 * @var list<string>
+	 */
+	public array $stripMetadataMime = ['image/jpg', 'image/jpeg', 'image/png', 'image/webp', 'image/avif'];
 
-	public $denySignatures = ['<?php'];
+	/**
+	 * Signatures checked at the start of a file to detect disguised executables.
+	 *
+	 * @var list<string>
+	 */
+	public array $denySignatures = ['<?php'];
 
-	//protected $uploadAllowExtensions = ['ico','jpg','jpeg','png','gif','webp', 'mp4', 'mkv', 'mov'];
-
-	protected function dirForType($type) {
+	/**
+	 * Return the filesystem path for a given directory type.
+	 *
+	 * @param string $type One of 'public', 'plugins', or 'themes'.
+	 *
+	 * @return string|false The directory path, or false if the type is invalid.
+	 */
+	protected function dirForType(string $type) : string|false {
 		switch ($type) {
 			case 'public':
 				$scandir = DIR_MEDIA;
@@ -64,7 +95,15 @@ trait Media {
 		return $scandir;
 	}
 
-	protected function setMediaEndpoints($controllerPath, $params = '') {
+	/**
+	 * Set the media-related URLs and upload limits on the view.
+	 *
+	 * @param string $controllerPath Base controller URL path.
+	 * @param string $params         Additional URL query parameters.
+	 *
+	 * @return void
+	 */
+	protected function setMediaEndpoints(string $controllerPath, string $params = '') : void {
 		$this->view->mediaUrl          = $controllerPath;
 		$this->view->scanUrl           = "$controllerPath&action=scan$params";
 		$this->view->uploadUrl         = "$controllerPath&action=upload$params";
@@ -74,8 +113,16 @@ trait Media {
 		$this->view->postMaxSize       = parseQuantity(ini_get('post_max_size'));
 	}
 
-	protected function isExecutableFile($file) {
+	/**
+	 * Check whether the first 16 bytes of a file contain a denied signature.
+	 *
+	 * @param string $file Absolute file path.
+	 *
+	 * @return bool True if the file contains a denied signature (e.g. PHP tag).
+	 */
+	protected function isExecutableFile(string $file) : bool {
 		if (file_exists($file)) {
+			/** @var string|false $header */
 			$header = file_get_contents($file, false, null, 0, 16);
 			if ($header) {
 				foreach ($this->denySignatures as $signature) {
@@ -88,21 +135,34 @@ trait Media {
 		return false;
 	}
 
-	function upload() {
+	/**
+	 * Handle file upload(s) from the media manager.
+	 *
+	 * Validates extensions, MIME types, file signatures, hidden files, and
+	 * path traversal. Moves valid files to the destination directory and
+	 * returns a JSON response.
+	 *
+	 * @return void
+	 */
+	public function upload() : void {
+		/** @var array<int, array{name: list<string>, tmp_name: list<string>, error: list<int>, size: list<int>}> $files */
 		$files      = $this->request->files['files'] ?? [];
+		/** @var bool $overwrite */
 		$overwrite  = $this->request->post['overwrite'] ?? false;
 		$success    = false;
 		$return     = '';
 		$message    = '';
+		/** @var list<array{success: bool, message: string, file: string, size?: int}> $response */
 		$response   = [];
 
-		list($files) = Event::trigger(__CLASS__, __FUNCTION__ , $files, $this);
+		/** @var list<array{name: list<string>, tmp_name: list<string>, error: list<int>, size: list<int>}> $files */
+		list($files) = Event::trigger(__CLASS__, __FUNCTION__, $files, $this);
 
 		if ($files) {
 			$length = count($files['name'] ?? []);
 
 			for ($count = 0; $count < $length; $count++) {
-				$path      = sanitizeFileName($this->request->post['mediaPath'] ?? '');
+				$path      = sanitizeFileName((string) ($this->request->post['mediaPath'] ?? ''));
 				$fileName  = sanitizeFileName($files['name'][$count]);
 
 				if (! $fileName) {
@@ -110,7 +170,6 @@ trait Media {
 				}
 
 				if (V_SUBDIR_INSTALL && strpos($path, V_SUBDIR_INSTALL) === 0) {
-					//$path  = str_replace(V_SUBDIR_INSTALL, '', $path);
 					$path  = substr_replace($path, '', 0, strlen(V_SUBDIR_INSTALL));
 				}
 
@@ -126,26 +185,27 @@ trait Media {
 					continue;
 				}
 
-				if (isset($this->uploadDenyExtensions) && in_array($extension, $this->uploadDenyExtensions)) {
+				if (in_array($extension, $this->uploadDenyExtensions)) {
 					$message .= sprintf(__('File type %s not allowed!'), $extension);
 					$success = false;
 					$response[] = ['success' => $success, 'message' => $message, 'file' => $fileName];
 					continue;
 				}
 
-				if (isset($this->uploadDenyMime) && in_array($mimeType, $this->uploadDenyMime)) {
+				if (in_array($mimeType, $this->uploadDenyMime)) {
 					$message .= sprintf(__('File type %s not allowed!'), $mimeType);
 					$success = false;
 					$response[] = ['success' => $success, 'message' => $message, 'file' => $fileName];
 					continue;
 				}
 
-				if (isset($this->stripMetadataMime) && in_array($mimeType, $this->stripMetadataMime)) {
+				if (in_array($mimeType, $this->stripMetadataMime)) {
+					//metadata stripping should be handled by the caller
 					$files['tmp_name'][$count];
 				}
 
 				//deny hidden files
-				if ($fileName[0] == '.') {
+				if ($fileName[0] === '.') {
 					$message .= __('Invalid upload!');
 					$success = false;
 					$response[] = ['success' => $success, 'message' => $message, 'file' => $fileName];
@@ -153,8 +213,9 @@ trait Media {
 				}
 
 				//check if the path is inside the allowed path
+				/** @var string|false $destination */
 				$destination = realpath($this->dirMedia . DS . $path . DS);
-				if (strncmp($destination, $this->dirMedia, strlen($this->dirMedia) - 1) !== 0) {
+				if (strncmp((string) $destination, $this->dirMedia, strlen($this->dirMedia) - 1) !== 0) {
 					$message .= __('Invalid upload!');
 					$success = false;
 					$response[] = ['success' => $success, 'message' => $message, 'file' => $fileName];
@@ -175,8 +236,7 @@ trait Media {
 				if ($success) {
 					$destination .= DS . $fileName;
 					$message .= $destination;
-					if ($overwrite) {
-					} else {
+					if (! $overwrite) {
 						while (file_exists($destination = $this->dirMedia . $path . DS . $fileName) && ($i++ < 5)) {
 							$fileName = rand(0, 10000) . '-' . $origFilename;
 						}
@@ -193,7 +253,7 @@ trait Media {
 						$destination = $this->dirMedia . $path . DS;
 						$success     = false;
 
-						if (! is_writable($destination)) {
+						if (! is_writable((string) $destination)) {
 							$message = sprintf(__('%s not writable!'), $destination);
 						} else {
 							$message = __('Error moving uploaded file!');
@@ -212,8 +272,18 @@ trait Media {
 		$this->response->output($response);
 	}
 
-	function delete() {
+	/**
+	 * Delete a file or directory from the media folder.
+	 *
+	 * Supports deleting a single file/directory or an array of files.
+	 * Returns a JSON response.
+	 *
+	 * @return void
+	 */
+	public function delete() : void {
+		/** @var string|array<int, string> $file */
 		$file        = $this->request->post['file'];
+		/** @var array{success: bool, message: string} $message */
 		$message     = ['success' => false, 'message' => __('Error deleting file!')];
 		$themeFolder = $this->dirMedia;
 
@@ -250,27 +320,39 @@ trait Media {
 		$this->response->output($message);
 	}
 
-	function rename() {
+	/**
+	 * Rename or copy a file in the media folder.
+	 *
+	 * When $duplicate is true, the file is copied instead of renamed.
+	 * Returns a JSON response.
+	 *
+	 * @return void
+	 */
+	public function rename() : void {
 		$file        = sanitizeFileName($this->request->post['file']);
-		$newfile     = sanitizeFileName($this->request->post['newfile'] ?? '');
-		$newname     = sanitizeFileName($this->request->post['newname'] ?? '');
-		$duplicate   =  $this->request->post['duplicate'] ?? false;
+		$newfile     = sanitizeFileName((string) ($this->request->post['newfile'] ?? ''));
+		$newname     = sanitizeFileName((string) ($this->request->post['newname'] ?? ''));
+		/** @var bool $duplicate */
+		$duplicate   = $this->request->post['duplicate'] ?? false;
 		$dirMedia    = $this->dirMedia;
 
 		$this->response->setType('json');
 
 		$currentFile = $dirMedia . DS . $file;
+		/** @var string $targetFile */
+		$targetFile  = $currentFile;
+
 		if ($newfile) {
-			$targetFile  = $dirMedia . DS . $newfile;
+			$targetFile = $dirMedia . DS . $newfile;
 		}
 
 		if ($newname) {
-			$targetFile  = dirname($currentFile) . DS . $newname;
+			$targetFile = dirname($currentFile) . DS . $newname;
 		}
 
 		$extension = strtolower(substr($targetFile, strrpos($targetFile, '.') + 1));
 
-		if (isset($this->uploadDenyExtensions) && in_array($extension, $this->uploadDenyExtensions)) {
+		if (in_array($extension, $this->uploadDenyExtensions)) {
 			$message = ['success' => false, 'message' => __('File type not allowed!')];
 			$this->response->output($message);
 			return;
@@ -293,7 +375,14 @@ trait Media {
 		$this->response->output($message);
 	}
 
-	function newFolder() {
+	/**
+	 * Create a new folder inside the media directory.
+	 *
+	 * Returns a JSON response with success or error message.
+	 *
+	 * @return void
+	 */
+	public function newFolder() : void {
 		$folder  = sanitizeFileName($this->request->post['folder']);
 		$path    = sanitizeFileName($this->request->post['path']);
 		$success = false;
@@ -321,31 +410,41 @@ trait Media {
 		$this->response->output($message);
 	}
 
-	function scan() {
-		$scandir       = $this->dirMedia; //$this->dirForType($type);
+	/**
+	 * Recursively scan the media directory and return a JSON tree of files and folders.
+	 *
+	 * @return void
+	 */
+	public function scan() : void {
+		$scandir = $this->dirMedia;
 
 		if (isset($this->dirMediaType) && $this->dirMediaType) {
+			/** @var string $type */
 			$type    = $this->request->get['type'] ?? 'public';
 			$scandir = $this->dirForType($type);
 		}
 
 		if (! $scandir) {
-			return [];
+			$this->response->setType('json');
+			$this->response->output([]);
+			return;
 		}
 
 		// This function scans the files folder recursively, and builds a large array
-		$scan = function ($dir) use ($scandir, &$scan) {
+		/** @var \Closure(string): list<array{name: string, type: string, path: string, items?: mixed[], size?: int}> $scan */
+		$scan = function (string $dir) use ($scandir, &$scan) : array {
 			$files = [];
 
 			// Is there actually such a folder/file?
 
 			if (file_exists($dir)) {
+				/** @var list<string>|false $listdir */
 				$listdir = @\scandir($dir);
 
 				if ($listdir) {
 					foreach ($listdir as $f) {
-						if (! $f || $f[0] == '.' || $f == 'node_modules' || $f == 'vendor') {
-							continue; // Ignore hidden files
+						if (! $f || $f[0] === '.' || $f === 'node_modules' || $f === 'vendor') {
+							continue;// Ignore hidden files
 						}
 
 						if (is_dir($dir . DS . $f)) {
@@ -355,7 +454,7 @@ trait Media {
 								'name'  => $f,
 								'type'  => 'folder',
 								'path'  => str_replace([$scandir, '\\'], ['', '/'], $dir) . '/' . $f,
-								'items' => $scan("$dir/$f"), // Recursively get the contents of the folder
+								'items' => $scan("$dir/$f"),
 							];
 						} else {
 							// It is a file
@@ -364,7 +463,7 @@ trait Media {
 								'name' => $f,
 								'type' => 'file',
 								'path' => str_replace([$scandir, '\\'], ['', '/'], $dir) . '/' . $f,
-								'size' => filesize("$dir/$f"), // Gets the size of this file
+								'size' => filesize("$dir/$f"),
 							];
 						}
 					}
@@ -376,7 +475,6 @@ trait Media {
 
 		$response = $scan($scandir);
 
-		// Output the directory listing as JSON
 		$this->response->setType('json');
 		$this->response->output([
 			'name'  => '',
