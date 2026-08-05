@@ -31,21 +31,53 @@ use Vvveb\System\Db;
 use function Vvveb\url;
 
 class Backup extends Base {
-	private $tables = [];
+	/**
+	 * Database table names to process.
+	 *
+	 * @var array<int|string, string>
+	 */
+	private array $tables = [];
 
-	private $position = 0;
+	/**
+	 * Current position in the backup/restore process.
+	 *
+	 * @var int
+	 */
+	private int $position = 0;
 
-	private $db;
+	/**
+	 * Database instance.
+	 *
+	 * @var Db
+	 */
+	private object $db;
 
+	/**
+	 * Initialize the database connection.
+	 *
+	 * @return void
+	 */
 	function __construct() {
 		$this->db = Db::getInstance();
 	}
 
-	public function getTableNames() {
+	/**
+	 * Get all database table names.
+	 *
+	 * @return list<string>
+	 */
+	public function getTableNames() : array {
 		return $this->db->getTableNames();
 	}
 
-	public function truncateTableSQL($sql) {
+	/**
+	 * Convert TRUNCATE TABLE SQL syntax for SQLite compatibility.
+	 *
+	 * @param string $sql The original TRUNCATE TABLE SQL statement.
+	 *
+	 * @return string The converted SQL statement.
+	 */
+	public function truncateTableSQL(string $sql) : string {
 		if (DB_ENGINE == 'sqlite') {
 			$tableName = pregMatch('/TRUNCATE TABLE [`"\']?([^`"\';]+)[`"\']?;?/ms', $sql, 1);
 
@@ -77,7 +109,14 @@ class Backup extends Base {
 		return $sql;
 	}
 
-	public function insertSQL($sql) {
+	/**
+	 * Convert INSERT INTO SQL syntax for PostgreSQL compatibility.
+	 *
+	 * @param string $sql The original INSERT INTO SQL statement.
+	 *
+	 * @return string The converted SQL statement.
+	 */
+	public function insertSQL(string $sql) : string {
 		if (DB_ENGINE == 'pgsql') {
 			$sql = preg_replace_callback('/INSERT INTO .+?\) VALUES \(/ms',
 				function ($matches) {
@@ -88,7 +127,16 @@ class Backup extends Base {
 		return $sql;
 	}
 
-	function getTableDump($tableName, $page = 1, $limit = 1000) {
+	/**
+	 * Dump table data as INSERT statements with pagination.
+	 *
+	 * @param string $tableName The database table name to dump.
+	 * @param int $page The page number for pagination.
+	 * @param int $limit The number of rows per page.
+	 *
+	 * @return string The SQL dump output.
+	 */
+	function getTableDump(string $tableName, int $page = 1, int $limit = 1000) : string {
 		$output = '';
 
 		if ($page == 1) {
@@ -147,7 +195,12 @@ class Backup extends Base {
 		return $output;
 	}
 
-	function nextBackup() {
+	/**
+	 * Process the next batch of tables for backup, with time-limited execution.
+	 *
+	 * @return void
+	 */
+	function nextBackup() : void {
 		$page      = $this->request->get['page'] ?? 1;
 		$table     = $this->request->get['table'] ?? false;
 		$position  = $this->request->get['position'] ?? 1;
@@ -197,13 +250,18 @@ class Backup extends Base {
 		} else {
 			$this->redirect($url);
 
-			return $this->index();
+			$this->index();
 		}
 	}
 
-	function nextRestore() {
+	/**
+	 * Process the next batch of SQL statements for restore, with time-limited execution.
+	 *
+	 * @return void
+	 */
+	function nextRestore() : void {
 		$position  = $this->request->get['position'] ?? 0;
-		$file      = $this->request->get['file'];
+		$file      = sanitizeFileName($this->request->get['file'] ?? '');
 		$filename  =  DIR_BACKUP . $file;
 		$size 	    = filesize($filename);
 
@@ -302,7 +360,12 @@ class Backup extends Base {
 		}
 	}
 
-	function delete() {
+	/**
+	 * Delete a backup file.
+	 *
+	 * @return void
+	 */
+	function delete() : void {
 		$file = sanitizeFileName($this->request->post['file'] ?? '');
 
 		if ($file) {
@@ -322,7 +385,12 @@ class Backup extends Base {
 		$this->index();
 	}
 
-	function restore() {
+	/**
+	 * Initiate a database restore from a backup file.
+	 *
+	 * @return void
+	 */
+	function restore() : void {
 		$file = sanitizeFileName($this->request->post['file'] ?? '');
 		$url  = ['module'=>'tools/backup', 'action' => 'nextRestore', 'file' => $file];
 
@@ -333,7 +401,7 @@ class Backup extends Base {
 				} else {
 					$this->redirect($url);
 
-					return $this->index();
+					$this->index();
 				}
 			} else {
 				$error = __('Backup does not exist!');
@@ -343,13 +411,18 @@ class Backup extends Base {
 				} else {
 					$this->view->errors[] = $error;
 
-					return $this->index();
+					$this->index();
 				}
 			}
 		}
 	}
 
-	function download() {
+	/**
+	 * Download a backup file as a plain text attachment.
+	 *
+	 * @return void
+	 */
+	function download() : void {
 		$filename = sanitizeFileName($this->request->post['file'] ?? '');
 
 		if ($filename) {
@@ -364,16 +437,21 @@ class Backup extends Base {
 
 				fpassthru($fp);
 
-				exit(0);
+				exit();
 			} else {
 				$this->view->errors[] = __('Backup does not exist!');
 			}
 		}
 
-		return $this->index();
+		$this->index();
 	}
 
-	function save() {
+	/**
+	 * Initiate the backup process.
+	 *
+	 * @return void
+	 */
+	function save() : void {
 		$url = ['module'=>'tools/backup', 'action' => 'nextBackup'];
 
 		if ($this->request->isAjax()) {
@@ -381,11 +459,16 @@ class Backup extends Base {
 		} else {
 			$this->redirect($url);
 
-			return $this->index();
+			$this->index();
 		}
 	}
 
-	function index() {
+	/**
+	 * Display the backup management page with existing backup files.
+	 *
+	 * @return void
+	 */
+	function index() : void {
 		$view        = $this->view;
 		$backupFiles = glob(DIR_BACKUP . '*');
 
