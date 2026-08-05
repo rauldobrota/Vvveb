@@ -29,9 +29,21 @@ use Vvveb\System\PageCache;
 use Vvveb\System\Session;
 
 class User extends Auth {
-	private static $namespace = 'user';
+	/**
+	 * Session namespace key for user data.
+	 *
+	 * @var string
+	 */
+	private static string $namespace = 'user';
 
-	public static function add($data) {
+	/**
+	 * Add a new user account.
+	 *
+	 * @param array<string, mixed> $data User data including username, email, password, etc.
+	 *
+	 * @return array|false Existing user info if already registered, new user record on success, or false on validation failure.
+	 */
+	public static function add(array $data) : array|false {
 		$user = new UserSQL();
 
 		if (! isset($data['username']) || ! $data['username']) {
@@ -63,7 +75,15 @@ class User extends Auth {
 		return $user->add([self :: $namespace => $data]);
 	}
 
-	public static function update($data, $condition) {
+	/**
+	 * Update an existing user record.
+	 *
+	 * @param array<string, mixed> $data      The data to update.
+	 * @param array<string, mixed> $condition The WHERE conditions for the update.
+	 *
+	 * @return mixed The result of the update operation.
+	 */
+	public static function update(array $data, array $condition) : mixed {
 		$user = new UserSQL();
 
 		if (empty($data['password'])) {
@@ -79,7 +99,14 @@ class User extends Auth {
 		return $user->edit(array_merge([self :: $namespace => $data], $condition));
 	}
 
-	public static function get($data) {
+	/**
+	 * Retrieve user info by login credentials or identifiers.
+	 *
+	 * @param array<string, mixed> $data Lookup criteria (email, username, user_id, token, status).
+	 *
+	 * @return array<string, mixed> User info array, or empty array if not found.
+	 */
+	public static function get(array $data) : array {
 		$user = new UserSQL();
 		//check user email and that status is active
 		$loginInfo = []; //['status' => 1];
@@ -118,7 +145,16 @@ class User extends Auth {
 		return $userInfo;
 	}
 
-	public static function login($data, $additionalInfo = [], &$feedback = []) {
+	/**
+	 * Authenticate a user using email/username and password.
+	 *
+	 * @param array<string, mixed>  $data           Login credentials (email, username, password).
+	 * @param array<string, mixed>  $additionalInfo Additional data to store in the session.
+	 * @param array<string, mixed>  &$feedback      Feedback message and code on failure.
+	 *
+	 * @return array<string, mixed>|false User info on success, false on failure.
+	 */
+	public static function login(array $data, array $additionalInfo = [], array &$feedback = []) : array|false {
 		$data['status']  = 1;
 		$userInfo        = self::get($data);
 		$passwordCorrect = false;
@@ -155,27 +191,56 @@ class User extends Auth {
 		return $userInfo;
 	}
 
-	public static function logout() {
+	/**
+	 * Log out the current user by clearing session data and enabling page cache.
+	 *
+	 * @return void
+	 */
+	public static function logout() : void {
 		PageCache::enable(self :: $namespace);
 
-		return sess([self :: $namespace => false]);
+		sess([self :: $namespace => false]);
 	}
 
-	public static function hash($data, $salt) {
+	/**
+	 * Generate an HMAC-MD5 hash of the given data with a salt.
+	 *
+	 * @param string $data The data to hash.
+	 * @param string $salt The salt/key for the HMAC.
+	 *
+	 * @return string The HMAC-MD5 hash.
+	 */
+	public static function hash(string $data, string $salt) : string {
 		return hash_hmac('md5', $data, $salt);
 	}
 
-	public static function generateCookie($cookieValue) {
+	/**
+	 * Validate a legacy cookie value by checking its MD5 hash.
+	 *
+	 * @param string $cookieValue The cookie value in "value:hash" format.
+	 *
+	 * @return bool True if the cookie hash is valid.
+	 */
+	public static function generateCookie(string $cookieValue) : bool {
 		list($value, $hash) = explode(':', $cookieValue, 2);
 
-		if (md5($value . '-' . SECRET_KEY) == $hash) {
+		if (hash_equals(md5($value . '-' . SECRET_KEY), $hash)) {
 			return true;
 		} else {
 			return false;
 		}
 	}
 
-	public static function checkCookie($cookieValue, $hmac, $scheme) {
+	/**
+	 * Validate a remember-me cookie using HMAC verification.
+	 *
+	 * @param string $cookieValue The cookie value in "username|hash|expiration|token" format.
+	 * @param string $hmac        The HMAC signature to verify against.
+	 * @param string $scheme      The hashing scheme key.
+	 *
+	 * @return bool True if the cookie HMAC is valid.
+	 */
+	public static function checkCookie(string $cookieValue, string $hmac, string $scheme) : bool {
 		list($username, $hash, $expiration, $token) = explode('|', $cookieValue, 4);
 
 		$key = hash($username . '|' . $hash . '|' . $expiration . '|' . $token, $scheme);
@@ -189,10 +254,11 @@ class User extends Auth {
 	}
 
 	/**
-	 * @ Currently logged in user data or empty array if guest
-	 * @return mixed 
+	 * Get the currently logged-in user's session data.
+	 *
+	 * @return array<string, mixed> Current user session data, or empty array if guest.
 	 */
-	public static function current() {
+	public static function current() : array {
 		$current = sess(self :: $namespace, []);
 
 		if ($current) {
@@ -201,16 +267,17 @@ class User extends Auth {
 			PageCache::enable('user');
 		}
 
-		return $current;
+		return $current ?: [];
 	}
 
 	/**
-	 * @ Update user session data
-	 * @param mixed $data 
+	 * Update the current user's session data by merging new values.
 	 *
-	 * @return mixed 
+	 * @param array<string, mixed>|null $data Key-value pairs to merge into the session.
+	 *
+	 * @return array|false Merged session data on success, false if no current session or invalid data.
 	 */
-	public static function session($data) {
+	public static function session(?array $data) : array|false {
 		$current = self :: current();
 
 		if ($current && $data && is_array($data)) {
