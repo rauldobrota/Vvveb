@@ -35,30 +35,78 @@ class AuthToken extends Listing {
 		CrudTrait::delete as get;
 	}*/
 
-	protected $type = 'admin_auth_token';
+	/**
+	 * Auth token type identifier.
+	 *
+	 * @var string
+	 */
+	protected string $type = 'admin_auth_token';
 
-	protected $list = 'admin_auth_token';
+	/**
+	 * List key used to identify the data collection.
+	 *
+	 * @var string
+	 */
+	protected string $list = 'admin_auth_token';
 
-	protected $listController = 'auth_token';
+	/**
+	 * Plural controller name for listing views.
+	 *
+	 * @var string
+	 */
+	protected string $listController = 'auth_token';
 
-	protected $module = 'admin';
+	/**
+	 * Module path this controller belongs to.
+	 *
+	 * @var string
+	 */
+	protected string $module = 'admin';
 
-	function index() {
+	/**
+	 * Display the auth token list for a specific admin user.
+	 *
+	 * @return void
+	 */
+	function index() : void {
 		$this->options['admin_id'] = $this->request->get['admin_id'] ?? false;
-		$this->options['limit']    =1000;
+		$this->options['limit']    = 1000;
 
 		if (! $this->options['admin_id']) {
-			return $this->notFound(__('User not found!'));
+			$this->notFound(__('User not found!'));
+			return;
 		}
+		
 
+		if (!Admin::hasCapability('view_other_admin')) {
+			if ($this->options['admin_id'] || ($this->options['admin_id'] != $this->global['admin_id'])) {
+				$message = __('Permission denied!');
+				$this->view->errors[] = $message;
+				$this->notFound($message, 403, true);
+			}
+		}
+		
 		$this->view->user_url = url(['module' => 'admin/user', 'admin_id' => $this->options['admin_id']]);
 		parent::index();
 	}
 
-	function save() {
+	/**
+	 * Save auth token data for a specific admin user.
+	 *
+	 * @return void
+	 */
+	function save() : void {
 		$admin_auth_token    = $this->request->post['admin_auth_token'] ?? [];
 		$admin_id            = $this->request->get['admin_id'] ?? false;
 
+		$editCapability = 'edit_other_admin';
+		if (!Admin::hasCapability($editCapability)) {
+			if (! $admin_id || $admin_id != $this->global['admin_id']) {
+				$view->errors[] = __('Permission denied!');
+				return;
+			}
+		}
+		
 		if ($admin_auth_token && $admin_id) {
 			foreach ($admin_auth_token as $key => $token) {
 				if ($key == '#') {
