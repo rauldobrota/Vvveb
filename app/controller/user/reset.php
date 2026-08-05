@@ -31,53 +31,69 @@ use Vvveb\System\Sites;
 use Vvveb\System\User\User;
 use function Vvveb\url;
 
+/**
+ * Password reset controller — handles reset request and token-based password change.
+ */
 #[\AllowDynamicProperties]
 class Reset extends Base {
-	function reset() {
+	/**
+	 * Process a password reset via token.
+	 *
+	 * @return void
+	 */
+	public function reset() : void {
 		$token           = $this->request->get['token'] ?? false;
 		$user            = $this->request->get['user'] ?? false;
 		$password        = $this->request->post['password'] ?? false;
 		$confirmPassword = $this->request->post['confirm_password'] ?? false;
 		$admin           = [];
+		$error           = __('Invalid or expired token!');
 
 		if ($user && $token) {
 			$admin = User::get(['user' => $user, 'token' => $token]);
 
-			if ($password) {
-				if ($confirmPassword && ($password === $confirmPassword)) {
-					if ($admin) {
+			if ($admin && $admin['token'] && $admin['token'] === $token) {
+				if ($password) {
+					if ($confirmPassword && ($password === $confirmPassword)) {
 						if (User::update(['token' => '', 'password' => $password], ['username' => $user, 'token' => $token])) {
 							$success                      = __('Password was reset!');
 							$this->view->success['login'] = $success;
 							$this->session->set('success', ['login' => $success]);
 							$this->redirect('/user/login');
-						//header('Location: ' . url(['module' => 'user/login', 'success' => $success]));
+							//header('Location: ' . url(['module' => 'user/login', 'success' => $success]));
 						} else {
 							$errors                      =  __('Update failed!');
 							$this->view->errors['login'] = $errors;
 							$this->session->set('errors', ['login' => $errors]);
 						}
+					} else {
+						$errors                      =  __('Passwords don\'t match!');
+						$this->view->errors['login'] = $errors;
 					}
-				} else {
-					$errors                      =  __('Passwords don\'t match!');
-					$this->view->errors['login'] = $errors;
 				}
+			} else {
+				die($error);
 			}
 		}
 
 		if (! $admin) {
-			die(__('Invalid or expired token!'));
+			die($error);
 		}
 	}
 
-	function index() {
+	/**
+	 * Handle the password reset request form: generate token and send reset email.
+	 *
+	 * @return void
+	 */
+	public function index() : void {
 		$email      = $this->request->post['email'] ?? false;
 		$loginData  = [];
 
 		if ($email) {
 			$loginData['email'] = $email;
 
-			list($loginData) = Event :: trigger(__CLASS__, __FUNCTION__ , $loginData);
+			list($loginData) = Event::trigger(__CLASS__, __FUNCTION__ , $loginData);
 
 			if ($loginData) {
 				if (($adminData = User::get($loginData)) != false) {
@@ -85,7 +101,7 @@ class Reset extends Base {
 					$token = Str::random(32);
 					User::update(['token' => $token], ['email' => $adminData['email']]);
 
-					$agent = $_SERVER['HTTP_USER_AGENT'];
+					$agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 
 					if (strpos($agent, 'Linux') !== false) {
 						$os = 'Linux';
@@ -97,7 +113,7 @@ class Reset extends Base {
 						$os = 'UnKnown';
 					}
 
-					$site = Sites :: getSiteData(SITE_ID);
+					$site = Sites::getSiteData(SITE_ID);
 
 					$reset_url = url('user/reset/reset', [
 						'token'  => $token,
@@ -109,7 +125,7 @@ class Reset extends Base {
 					$data = $adminData + [
 						'token'            => $token,
 						'operating_system' => $os,
-						'browser_name'     => $_SERVER['HTTP_USER_AGENT'],
+						'browser_name'     => $_SERVER['HTTP_USER_AGENT'] ?? '',
 						'reset_url'        => $reset_url,
 					];
 
@@ -122,7 +138,7 @@ class Reset extends Base {
 						$this->view->errors[] = __('Error sending reset email!');
 					}
 				} else {
-					$this->view->errors['login'] = __('Email not found!');
+					$this->view->errors['login'] = __('If that email is registered, you will receive a reset link.');
 				}
 			}
 		}
